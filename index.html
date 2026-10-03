@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>ATLAS 环球购</title>
+<title>ATLAS 环球购 · 模拟商城</title>
 <style>
 :root{--ink:#14181F;--ink2:#3A4350;--teal:#0E7C7B;--teal-d:#0A5E5D;--gold:#B58A3C;--gold-l:#EBDDB9;--soft:#F6F7F9;--line:#E8EAEE;--muted:#8A93A0;--red:#D8344F;--green:#1E9E6A;--r:16px;--serif:"Songti SC","Noto Serif SC","Source Han Serif SC",Georgia,serif}
 *{box-sizing:border-box;margin:0;padding:0}
@@ -1852,4 +1852,200 @@ function scamRoll(items){for(const i of items){const p=PM[i.pid];if(!p.scam)cont
 const PARCEL_SVG='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 8 12 3.5 20.5 8v8L12 20.5 3.5 16z"/><path d="M3.5 8 12 12.5 20.5 8M12 12.5v8M7.6 5.8l8.6 4.4"/></svg>';
 function loanRepayable(lid){const l=S.loans.find(x=>x.id===lid);if(!l||l.kind==='cc'||l.status!=='active'||!Number.isFinite(l.remain)){toast('没有可提前还款的银行贷款');return null}return l}
 function loanRepayModal(lid){const l=loanRepayable(lid);if(!l)return;const a=S.banks[l.bank];if(!a){toast('未找到还款账户');return}const need=r2(l.remain+(l.late||0));
- openModal(`<h3>提前还款</h3><p class="sub">一次性还清剩余本金，不收违约金。从 ${BK[l.bank].s}账户扣�
+ openModal(`<h3>提前还款</h3><p class="sub">一次性还清剩余本金，不收违约金。从 ${BK[l.bank].s}账户扣款。</p><div class="rcpt" style="margin-top:0"><div><span>应还金额</span><b>${fmt(need)}</b></div><div><span>账户余额</span><b>${fmt(a.bal)}</b></div></div>${a.bal<need?'<div class="err">账户余额不足，请先存入</div>':''}<div class="row"><button class="btn ghost" data-act="closeModal">取消</button><button class="btn pri" data-act="loanRepayGo" data-id="${lid}" ${a.bal<need?'disabled':''}>确认还款</button></div>`)}
+function loanRepayGo(lid){const l=loanRepayable(lid);if(!l)return;const a=S.banks[l.bank];if(!a)return;const need=r2(l.remain+(l.late||0));
+ needPin(()=>{if(!Number.isFinite(need)||need<=0){toast('没有需要还的款项');return}if(!(a.bal>=need)){toast('账户余额不足');return}a.bal=r2(a.bal-need);blog(a,'贷款提前结清',-need);l.remain=0;l.status='closed';l.late=0;l.overdue=0;S.credit=Math.min(850,S.credit+8);closeModal();route(true);toast('贷款已结清，信用分 +8')},{title:'验证支付密码',sub:'提前结清 '+fmt(need)})}
+function fixNaN(){let n=0;const fx=(o,k,d)=>{if(!Number.isFinite(o[k])){o[k]=d;n++}};
+ Object.values(S.banks).forEach(a=>{fx(a,'bal',0);fx(a,'int',0);a.log=(a.log||[]).filter(x=>Number.isFinite(x.amt));a.terms=(a.terms||[]).filter(t=>Number.isFinite(t.p))});
+ fx(S,'balance',0);fx(S,'credit',700);
+ S.loans.forEach(l=>{if(l.kind!=='cc'&&l.status==='active'&&!Number.isFinite(l.remain)){l.status='closed';l.remain=0;n++}});
+ if(n){saveState();setTimeout(()=>toast('已修复存档中的异常数值（异常的银行余额已重置为 0）'),900)}}
+/* ---- 短信窥视 ---- */
+function closePeek(){$('#peek-root').innerHTML=''}
+function renderPeek(){const modal=PAY||$('#modal-root').innerHTML;
+ $('#peek-root').innerHTML=`<div class="peek-ov" data-act="peekBg"><div class="peek-sh"><div class="peek-h"><b>最新短信</b><button data-act="peekClose" aria-label="关闭">✕</button></div>${modal?'<div class="peek-n">当前操作不会中断，看完点「返回」即可继续。</div>':''}<div class="peek-l">${S.msgs.slice(0,5).map(m=>`<div class="msg"><div class="mh"><b>${esc(m.from)}</b><span>${tstr(new Date(m.t))}</span></div><p>${esc(m.text.replace(/<[^>]*>/g,''))}</p></div>`).join('')||'<div class="muted" style="padding:16px 0">暂无短信</div>'}</div><div class="peek-f"><button class="btn ghost sm" data-act="peekClose">返回</button><button class="btn pri sm" data-act="peekInbox">${modal?'去消息中心（退出当前流程）':'打开消息中心'}</button></div></div></div>`;
+ S.msgs.forEach(m=>m.read=true);updateChrome()}
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&$('#peek-root').firstChild){closePeek();e.stopImmediatePropagation()}},true);
+
+/* ---- 银行（更真实） ---- */
+const BKX={icbc:{tel:'95588',sw:'ICBKCNBJ'},ccb:{tel:'95533',sw:'PCBCCNBJ'},boc:{tel:'95566',sw:'BKCHCNBJ'},abc:{tel:'95599',sw:'ABOCCNBJ'},cmb:{tel:'95555',sw:'CMBCCNBS'},hsbc:{sw:'HSBCUS33'},citi:{sw:'CITIUS33'},chase:{sw:'CHASUS33'}};
+const acctNo=id=>{const r=rng('acct'+UID+id);let q='';for(let i=0;i<12;i++)q+=Math.floor(r()*10);return q};
+const apyOf=r=>((Math.pow(1+r/365,365)-1)*100).toFixed(2)+'%';
+function creditGauge(cr){const cx=110,cy=104,R=84,pt=(v,r)=>{const th=Math.PI*(1+(v-300)/550);return[(cx+r*Math.cos(th)).toFixed(1),(cy+r*Math.sin(th)).toFixed(1)]};
+ const seg=[[300,580,'#D8344F'],[580,670,'#F08A3C'],[670,740,'#E3C040'],[740,800,'#6FBF73'],[800,850,'#1E9E6A']];
+ const arcs=seg.map(([a,b,c])=>{const p0=pt(a,R),p1=pt(b,R);return `<path d="M${p0[0]} ${p0[1]}A${R} ${R} 0 0 1 ${p1[0]} ${p1[1]}" fill="none" stroke="${c}" stroke-width="12"/>`}).join('');
+ const nd=pt(clamp(cr,300,850),R-18);
+ return `<svg viewBox="0 0 220 142" class="gauge" role="img" aria-label="信用分 ${cr}">${arcs}<line x1="${cx}" y1="${cy}" x2="${nd[0]}" y2="${nd[1]}" stroke="#14181F" stroke-width="2.5" stroke-linecap="round"/><circle cx="${cx}" cy="${cy}" r="6" fill="#14181F"/><text x="${cx}" y="${cy+32}" text-anchor="middle" class="gv">${cr}</text></svg>`}
+function bcardHTML(c,reveal){const b=BK[c.bank],no=reveal?fmtNo(c.no):'•••• •••• •••• '+c.no.slice(-4);
+ return `<div class="bcard${c.frozen?' frz':''}" style="background:linear-gradient(135deg,${b.c[0]},${b.c[1]})" data-act="cardShow" data-id="${c.id}"><div class="bc-top"><b>${b.s}</b><span>${c.frozen?'已冻结':c.type==='debit'?'借记卡':'信用卡'}</span></div><div class="chipx"></div><div class="bc-no">${no}</div><div class="bc-bot"><div><small>持卡人</small>${esc(dispName())}</div><div><small>有效期</small>${c.exp.slice(0,2)}/${c.exp.slice(2)}</div>${reveal?`<div><small>CVV</small>${c.cvv}</div>`:''}<em>${b.net}</em></div></div>`}
+const stmRow=x=>`<div class="stm-r"><div class="stm-d"><b style="font-weight:500">${esc(x.title)}</b><small>${tstr(new Date(x.t))}</small></div><div class="stm-a"><b class="${x.amt>=0?'up':''}">${x.amt>=0?'+':'−'}${fmt(Math.abs(x.amt))}</b><small>余额 ${x.bal==null?'—':fmt(x.bal)}</small></div></div>`;
+const SHIELD='<svg viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/><path d="m9 12 2 2 4-4"/></svg>';
+function pageBank(id){
+ if(id&&BK[id])return pageBankDetail(id);
+ const accts=Object.values(S.banks),tot=bankTotal(),debt=bankDebt(),inte=accts.reduce((a,x)=>a+x.int,0),cr=S.credit,crc=cr>=750?'极好':cr>=700?'优秀':cr>=650?'良好':cr>=600?'一般':'较差';
+ const daily=accts.reduce((a,x)=>a+x.bal*BK[x.id].dep[0]*macroRm()/365,0);
+ const bl=S.loans.filter(l=>l.status==='active').reduce((a,l)=>a+l.remain+(l.late||0),0),cc=S.cards.filter(c=>c.type==='credit').reduce((a,c)=>a+c.used,0),pl=S.pl.reduce((a,l)=>a+plOwed(l),0);
+ const recent=accts.flatMap(a=>a.log.map(x=>Object.assign({bank:a.id},x))).sort((x,y)=>y.t-x.t).slice(0,8);
+ const accRows=accts.length?accts.map(a=>{const b=BK[a.id],lock=a.terms.reduce((q,t)=>q+t.p,0);return `<a class="arow" href="#/bank/${a.id}"><span class="bl" style="background:linear-gradient(135deg,${b.c[0]},${b.c[1]})">${b.s[0]}</span><div><b>${b.s}</b><small>储蓄账户 ···· ${acctNo(a.id).slice(-4)} · 活期 APY ${apyOf(b.dep[0]*macroRm())}</small></div><div class="am"><b>${fmt(a.bal+lock)}</b><small>${lock?'含定期 '+fmt(lock):'可用 '+fmt(a.bal)}</small></div></a>`}).join(''):'<div class="muted" style="padding:14px 0">还没有银行账户。选择下方任一合作银行开户，即可存款、办卡、申请贷款。</div>';
+ return `<div class="sec-h" style="margin-top:6px"><h2>银行与金融</h2><span>银行日 ${dfmt(S.bankDay)}</span></div>
+ <div class="wallet"><div class="bov"><div class="tt"><small>银行存款合计（USD）</small><b>${fmt(tot)}</b></div><div><small>累计利息收入</small><b>${fmt(inte)}</b></div><div><small>日均利息（估）</small><b>+${fmt(daily)}</b></div><div><small>待还债务</small><b>${fmt(debt)}</b></div></div></div>
+ <div class="bank2" style="margin-top:22px"><div>
+  <div class="panel" style="margin-top:0"><h2>我的账户</h2>${accRows}<div class="nt">${SHIELD}<span>存款保险：每家银行、每位储户的存款最高受 $250,000 保障。银行工作人员不会向您索要验证码或密码。</span></div></div>
+  ${S.cards.length?`<div class="panel"><h2>我的银行卡 <span class="muted" style="font-weight:400;font-size:13px">点击卡片显示完整卡号</span></h2><div class="cardrow">${S.cards.map(c=>bcardHTML(c,REVEAL[c.id])).join('')}</div></div>`:''}
+  <div class="panel"><h2>近期交易</h2>${recent.length?recent.map(x=>`<div class="stm-r"><div class="stm-d"><b style="font-weight:500">${esc(x.title)}</b><small>${BK[x.bank].s} · ${tstr(new Date(x.t))}</small></div><div class="stm-a"><b class="${x.amt>=0?'up':''}">${x.amt>=0?'+':'−'}${fmt(Math.abs(x.amt))}</b></div></div>`).join(''):'<div class="muted">暂无交易记录</div>'}</div>
+ </div><div>
+  <div class="panel" style="margin-top:0"><h2>个人信用分</h2>${creditGauge(cr)}<div class="gcap">信用等级 <b>${crc}</b>（300–850）</div><div class="fct"><div><span>按时还款</span><b>影响最大</b></div><div><span>债务占比</span><b>越低越好</b></div><div><span>逾期记录</span><b>严重扣分</b></div></div></div>
+  <div class="panel"><h2>债务总览</h2>${debt>.5?`${bl>.5?`<div class="dbr"><span>银行贷款</span><b>${fmt(bl)}</b></div>`:''}${cc>.5?`<div class="dbr"><span>信用卡欠款</span><b>${fmt(cc)}</b></div>`:''}${pl>.5?`<div class="dbr"><span>网贷 / 民间借款</span><b class="dn">${fmt(pl)}</b></div>`:''}<div class="dbr"><span><b>合计</b></span><b>${fmt(debt)}</b></div>`:'<div class="muted">目前没有负债</div>'}</div>
+ </div></div>
+ <div class="sec-h"><h2>合作银行</h2><span>开户后可存款、办卡、申请贷款</span></div>
+ <div class="bgrid">${BANKS.map(b=>{const a=S.banks[b.id];return `<a class="bk" href="#/bank/${b.id}"><div class="bk-h" style="background:linear-gradient(135deg,${b.c[0]},${b.c[1]})"><span class="bl">${b.s[0]}</span><div><b>${b.s}</b><small>${b.tag}</small></div>${a?'<em>已开户</em>':''}</div><div class="bk-b"><div><small>活期</small><b>${(b.dep[0]*100).toFixed(2)}%</b></div><div><small>1 年定期</small><b>${(b.dep[3]*100).toFixed(2)}%</b></div><div><small>贷款年化</small><b>${(b.loan*100).toFixed(2)}%</b></div></div></a>`}).join('')}</div>
+ <div class="sec-h"><h2>热门金融服务<span class="adtag">合作机构 · 广告</span></h2><span></span></div>
+ <a class="pm2" href="#/ext/loan"><div><i>资金周转</i><b>新客专享 · 免息借款</b><p>最高 $50,000 额度 · 最快 3 秒到账 · 无需抵押</p></div><span class="go">立即领取 ›</span></a>
+ <a class="pm2 o2" href="#/ext/sd"><div><i>急用钱</i><b>闪电周转 · 3 分钟到账</b><p>最高 $3,000 · 无需征信 · 7 天一期</p></div><span class="go">马上借 ›</span></a>
+ <a class="pm2 o3" href="#/ext/mj"><div><i>大额周转</i><b>宏达小额周转 · 月息 2 分起</b><p>最高 $20,000 · 看流水就能借 · 当天放款</p></div><span class="go">查看额度 ›</span></a>
+ <p class="muted" style="margin-top:14px">存款利率、贷款利率均参考真实银行产品设定；外资银行美元利率更高但有最低余额要求。</p>`}
+function pageBankDetail(id){const b=BK[id],a=S.banks[id],X=BKX[id]||{};
+ const rates=`<div class="panel"><h2>存款利率（年化）</h2><table class="tbl"><tr><th>期限</th><th>活期</th>${TERMS.map(t=>`<th>${t[1]}</th>`).join('')}</tr><tr><td>利率</td>${b.dep.map(r=>`<td>${(r*100).toFixed(2)}%</td>`).join('')}</tr><tr><td>年化收益 APY</td>${b.dep.map(r=>`<td>${apyOf(r)}</td>`).join('')}</tr></table><p class="muted" style="margin-top:10px">消费贷年化 ${(b.loan*100).toFixed(2)}% · 最高额度 ${fmt(b.cap)} · 审批约 ${b.days} 个银行日${b.fee?` · 账户余额低于 ${fmt(b.min)} 时每月收费 ${fmt(b.fee)}`:' · 无账户管理费'}</p></div>`;
+ const head=`<div class="crumb"><a href="#/bank">银行</a> / ${b.s}</div><div class="bkhero" style="background:linear-gradient(135deg,${b.c[0]},${b.c[1]})"><span class="bl big">${b.s[0]}</span><div><h2>${b.n}</h2><p>${b.tag} · ${b.about}</p>${X.tel?`<p style="margin-top:6px">客服热线 ${X.tel}</p>`:''}</div></div>`;
+ if(!a)return head+`<div class="panel" style="text-align:center"><p style="margin-bottom:14px">您还没有 ${b.s} 账户。开户后将自动开通一张借记卡。</p><button class="btn pri" data-act="openAcct" data-id="${id}">立即开户</button></div>${rates}`;
+ const cards=S.cards.filter(c=>c.bank===id),loans=S.loans.filter(l=>l.bank===id&&l.kind!=='cc'),ccApps=S.loans.filter(l=>l.bank===id&&l.kind==='cc'&&(l.status==='review'||l.status==='rejected')),lock=a.terms.reduce((q,t)=>q+t.p,0),dly=a.bal*b.dep[0]*macroRm()/365;
+ return head+`<div class="acct"><div><small>可用余额（USD）</small><div class="ab">${fmt(a.bal)}</div><small class="muted">${lock?'定期存款 '+fmt(lock)+' · ':''}累计利息 ${fmt(a.int)} · 今日预计利息 +${fmt(dly)}</small></div>
+ <div class="acts"><button class="btn pri sm" data-act="dep" data-id="${id}">存入</button><button class="btn ghost sm" data-act="wd" data-id="${id}">取出</button><button class="btn ghost sm" data-act="xfer" data-id="${id}">转账</button><button class="btn ghost sm" data-act="termOpen" data-id="${id}">定期存款</button><button class="btn ghost sm" data-act="cardOpen" data-id="${id}">办理银行卡</button><button class="btn ghost sm" data-act="loanOpen" data-id="${id}">申请贷款</button></div></div>
+ <div class="panel"><h2>账户信息</h2><div class="meta2"><div><small>账户类型</small>储蓄账户（美元）</div><div><small>账号</small>${fmtNo(acctNo(id))}</div><div><small>SWIFT</small>${X.sw||'—'}</div><div><small>开户日期</small>${dfmt(a.since)}</div><div><small>存款保险</small>最高 $250,000</div></div></div>
+ ${a.terms.length?`<div class="panel"><h2>定期存款</h2>${a.terms.map(t=>{const left=Math.max(0,t.mature-S.bankDay),pc=clamp((S.bankDay-t.start)/t.days*100,0,100);return `<div class="term"><div><b>${fmt(t.p)}</b> · ${t.name} · 年化 ${(t.rate*100).toFixed(2)}%<small class="muted" style="display:block">到期 ${dfmt(t.mature)}（还剩 ${Math.ceil(left)} 个银行日）· 到期收益 ${fmt(t.p*t.rate*t.days/365)}</small><div class="prog"><i style="width:${pc}%"></i></div></div><button class="btn ghost sm" data-act="termBreak" data-id="${id}" data-t="${t.id}">提前支取</button></div>`}).join('')}</div>`:''}
+ ${cards.length?`<div class="panel"><h2>本行银行卡</h2><div class="cardrow">${cards.map(c=>bcardHTML(c,REVEAL[c.id])).join('')}</div>${cards.map(c=>`<div class="cfz"><small>•••• ${c.no.slice(-4)} · ${c.type==='debit'?'借记卡':'信用卡'}</small><button class="btn ghost sm" data-act="cardFreeze" data-id="${c.id}">${c.frozen?'解冻':'冻结'}</button></div>`).join('')}${cards.filter(c=>c.type==='credit').map(c=>{const mn=Math.max(25,r2(c.used*.1));return `<div class="term" style="margin-top:12px"><div><b>信用卡 •••• ${c.no.slice(-4)}</b><small class="muted" style="display:block">额度 ${fmt(c.limit+(tierNow()?tierNow().credit:0))} · 已用 ${fmt(c.used)} · 可用 ${fmt(creditAvail(c))}${c.used>0?(S.bankDay-c.cycle>25?' · <span class="dn">已过免息期，按日计息</span>':' · 免息期剩 '+Math.max(0,Math.ceil(25-(S.bankDay-c.cycle)))+' 日'):''}</small>${c.used>0?`<small class="muted" style="display:block">账单日 ${dfmt(c.cycle)} · 最后还款日 ${dfmt(c.cycle+25)} · 最低还款 ${fmt(Math.min(mn,c.used))}</small>`:''}</div>${c.used>0?`<button class="btn ghost sm" data-act="ccRepay" data-id="${c.id}">还款</button>`:''}</div>`}).join('')}</div>`:''}
+ ${ccApps.length?`<div class="panel"><h2>信用卡申请</h2>${ccApps.map(l=>{if(l.status==='rejected')return `<div class="term"><div><b>信用卡申请未通过</b><small class="muted" style="display:block">综合评分不足，提升信用分后可再次申请。</small></div></div>`;const el=S.bankDay-l.applyDay,pc=clamp(el/l.days*100,0,100);return `<div class="term"><div><b>信用卡申请审批中</b><small class="muted" style="display:block">预计 ${Math.max(1,Math.ceil(l.days-el))} 个银行日后出结果</small><div class="prog"><i style="width:${pc}%"></i></div></div></div>`}).join('')}</div>`:''}
+ ${loans.length?`<div class="panel"><h2>我的贷款</h2>${loans.slice().reverse().map(l=>loanRow(l)).join('')}</div>`:''}
+ ${rates}
+ <div class="panel"><div class="gh"><span style="font:600 19px var(--serif)">账户明细</span><button class="linkbtn" data-act="stmExport" data-id="${id}">导出对账单</button></div>${a.log.length?a.log.map(stmRow).join(''):'<div class="muted">暂无明细</div>'}</div>`}
+function xferModal(id){const others=Object.values(S.banks).filter(x=>x.id!==id);if(!others.length){toast('请先在其他银行开户，再进行账户间转账');return}
+ openModal(`<h3>转账 · ${BK[id].s}</h3><p class="sub">转至本人其他银行账户，可用 ${fmt(S.banks[id].bal)}</p><div class="f"><div><label>收款账户</label><select id="xto" style="border:1px solid var(--line);border-radius:12px;padding:11px 14px;width:100%">${others.map(x=>`<option value="${x.id}">${BK[x.id].s} ···· ${acctNo(x.id).slice(-4)}</option>`).join('')}</select></div><div><label>金额（USD）</label><input id="xv" type="number" min="1" placeholder="0.00"></div></div><div class="rcpt"><div><span>手续费</span><b>0.1%（最低 $1，最高 $25）</b></div><div><span>到账时间</span><b>实时到账</b></div></div><div class="row"><button class="btn ghost" data-act="closeModal">取消</button><button class="btn pri" data-act="xferGo" data-id="${id}">确认转账</button></div>`)}
+function xferGo(id){const v=r2(+$('#xv').value),to=$('#xto').value,a=S.banks[id],b2=S.banks[to];if(!(v>0)){toast('请输入有效金额');return}
+ const fee=r2(clamp(v*.001,1,25));if(v+fee>a.bal){toast('账户余额不足（含手续费 '+fmt(fee)+'）');return}
+ const run=()=>{a.bal=r2(a.bal-v-fee);b2.bal=r2(b2.bal+v);blog(a,'转账至 '+BK[to].s+' ···· '+acctNo(to).slice(-4),-v);blog(a,'转账手续费',-fee);blog(b2,'收到转账 · 来自 '+BK[id].s,v);closeModal();route(true);toast('转账成功')};
+ if(v>=1000)needPin(run,{title:'验证支付密码',sub:'转账 '+fmt(v)});else run()}
+
+/* ---- 借贷平台：易融金服 / 闪电周转 / 宏达民间借贷 ---- */
+const PLK={
+ yr:{n:'易融金服',les:'loan',term:14,auto:1,cpen:40,gap:3,rolltxt:'支付展期服务费后，还款日顺延 14 天，本金不变。',tail:'这类产品就是典型的“套路贷”，快来看看反诈中心的提醒。',dun:(l,od)=>od<6?`【易融金服】您的借款已逾期 ${od} 天，当前应还 ${fmt(plOwed(l))}，请立即还款，避免产生更多费用。`:`【易融金服·催收】您已严重逾期 ${od} 天，应还 ${fmt(plOwed(l))}。我们将联系您的紧急联系人并上报征信，请立即处理！`},
+ sd:{n:'闪电周转',les:'sd',term:7,auto:1,cpen:50,gap:1,rolltxt:'支付展期服务费后，还款日顺延 7 天，本金不变。',tail:'这就是俗称的“714 高炮”：砍头息加上极短的周期，真实成本高得离谱。',dun:(l,od)=>od<3?`【闪电周转】您的借款已逾期 ${od} 天，罚息按日累计，当前应还 ${fmt(plOwed(l))}。请立即还款！`:`【闪电周转·催收】您已逾期 ${od} 天，应还 ${fmt(plOwed(l))}。系统将向您的紧急联系人群发欠款通知，并上报多家平台！`},
+ mj:{n:'宏达民间借贷',les:'mj',term:30,auto:0,cpen:30,gap:2,rolltxt:'续期：支付当期利息后顺延 30 天，本金不减，利息继续按月滚动。',tail:'这就是高利贷：预扣利息、利滚利，欠得越久越还不清。',dun:(l,od)=>od<3?`【宏达借贷·王经理】您的借款已到期，利息已滚入本金，当前应还 ${fmt(plOwed(l))}，请尽快联系办理续期或结清。`:`【宏达借贷·催收部】已逾期 ${od} 天，应还 ${fmt(plOwed(l))}（含催收服务费）。再不处理，我们将安排人员上门协商。`}};
+function plDay(){S.pl.forEach(l=>{if(l.status==='closed')return;const K=PLK[l.kind||'yr'];
+ if(K.auto&&S.bankDay>=l.due&&S.balance>0&&plOwed(l)>.5){const o=plOwed(l),d=r2(Math.min(S.balance,o));S.balance=r2(S.balance-d);l.paid=r2(l.paid+d);S.tx.push({t:new Date(),title:K.n+' · 到期自动代扣',amt:-d});
+  if(!l.debited){l.debited=true;pushMsg({from:K.n,text:`【${K.n}】您的借款已到期，系统已按《钱包代扣授权书》自动扣款 ${fmt(d)}。`,real:true})}
+  if(plOwed(l)<=.5){l.status='closed';lesson(K.les)}}
+ if(S.bankDay>l.due&&!l.flag){l.flag=true;S.credit=Math.max(300,S.credit-K.cpen);lesson(K.les)}
+ if(S.bankDay>l.due&&S.bankDay-l.lastMsg>=K.gap&&plOwed(l)>.5){l.lastMsg=S.bankDay;pushMsg({from:K.n,text:K.dun(l,Math.ceil(S.bankDay-l.due)),real:true})}})}
+const rollFee=l=>{const k=l.kind||'yr',od=S.bankDay>l.due,ow=plOwed(l);
+ if(k==='sd')return r2(l.face*.25+(od?Math.max(0,ow-l.face*1.01):0));
+ if(k==='mj')return od?r2(Math.max(0,ow-l.face)):r2(l.face*.2);
+ return r2(l.face*.2+(od?Math.max(0,ow-l.face*1.007):0))};
+function plCard(l){const owed=plOwed(l),od=S.bankDay>l.due;return `<div class="yl-box" style="border-color:${od?'#e0383e':'#dfe6f0'}"><div class="yl-line"><span>${od?'<b style="color:#e0383e">已逾期</b>':'使用中'} · 借款 ${fmt(l.face)}</span><b>待还 ${fmt(owed)}</b></div><div class="yl-line"><span>${od?'已逾期 '+Math.ceil(S.bankDay-l.due)+' 日':'距到期 '+Math.max(0,Math.ceil(l.due-S.bankDay))+' 日'}${l.rolls?` · 已${l.kind==='mj'?'续期':'展期'} ${l.rolls} 次`:''}</span><span></span></div><div style="display:flex;gap:8px;margin-top:8px"><button class="yl-sm" data-act="ylRepay" data-id="${l.id}">立即还款</button><button class="yl-sm ghost" data-act="ylRoll" data-id="${l.id}">${l.kind==='mj'?'申请续期':'申请展期'}</button></div></div>`}
+function ylRepayGo(id){const l=S.pl.find(x=>x.id===id),o=plOwed(l),K=PLK[l.kind||'yr'];needPin(()=>{if(S.balance<o){toast('钱包余额不足');return}S.balance=r2(S.balance-o);l.paid=r2(l.paid+o);l.status='closed';S.tx.push({t:new Date(),title:K.n+' · 还款',amt:-o});closeModal();updateChrome();route(true);toast('已还清');lesson(K.les);
+ const tot=l.paid+(l.fees||0),days=Math.max(1,S.bankDay-l.start);
+ setTimeout(()=>openModal(`<div class="okmark">!</div><h3 style="text-align:center">这笔借款，您实际花了多少钱？</h3><p class="sub" style="text-align:center">借 ${fmt(l.face)}，到账只有 ${fmt(l.net)}，加上利息和各项费用共付出 ${fmt(tot)}，多付了 ${Math.round((tot/l.net-1)*100)}%（折合年化约 ${Math.round((tot/l.net-1)*365/days*100).toLocaleString()}%）。${K.tail}</p><div class="row"><button class="btn ghost" data-act="closeModal">知道了</button><button class="btn pri" data-act="goSafe">查看提醒</button></div>`),700)},{title:'验证支付密码',sub:'还款 '+fmt(o)})}
+function ylRollGo(id){const l=S.pl.find(x=>x.id===id),K=PLK[l.kind||'yr'],fee=rollFee(l);
+ openModal(`<h3>${l.kind==='mj'?'申请续期':'申请展期'}</h3><p class="sub">${K.rolltxt}</p><div class="rcpt" style="margin-top:0"><div><span>${l.kind==='mj'?'续期利息':'展期服务费'}</span><b>${fmt(fee)}</b></div><div><span>钱包余额</span><b>${fmt(S.balance)}</b></div></div><div class="row"><button class="btn ghost" data-act="closeModal">取消</button><button class="btn pri" data-act="ylRollOk" data-id="${id}" ${S.balance<fee?'disabled':''}>支付并${l.kind==='mj'?'续期':'展期'}</button></div>`)}
+function ylRollOk(id){const l=S.pl.find(x=>x.id===id),K=PLK[l.kind||'yr'],fee=rollFee(l);needPin(()=>{if(S.balance<fee){toast('钱包余额不足');return}S.balance=r2(S.balance-fee);l.rolls++;l.fees=r2((l.fees||0)+fee);l.due=S.bankDay+K.term;l.start=S.bankDay;l.debited=false;l.paid=0;l.flag=false;S.tx.push({t:new Date(),title:K.n+' · '+(l.kind==='mj'?'续期利息':'展期服务费'),amt:-fee});closeModal();updateChrome();route(true);toast('办理成功，还款日顺延 '+K.term+' 天，本金不变');lesson(K.les);if(S.pl.filter(x=>x.status!=='closed').length>1)lesson('spiral')},{title:'验证支付密码',sub:fee?fmt(fee):'办理'})}
+const SHK={
+ sd:{url:'https://shandian-zz.cc/h5',n:'闪电周转',sub:'小额极速借款 · 用完即还',hd:['#FF6A00','#FFA040'],bg:'#FFF6EE',k1:'您的预审额度',big:'$3,000',p:'3 分钟放款 · 免抵押 · 无需征信 · 黑户也能借',amts:[500,1000,2000,3000],net:.6,termTxt:'7 天',rl:'日息',rv:'低至 0.14%',btn:'立即借款 · 3 分钟到账',
+  fees:a=>[['服务费（一次性）','−'+fmt(a*.3)],['风控保证金（逾期不退）','−'+fmt(a*.1)],['实际到账',fmt(a*.6)],['到期应还',fmt(a*1.01)],['逾期违约金','每日 5% 本金 + 第 2 天起催收费 $80'],['展期服务费','25% 本金 / 7 天'],['综合年化成本（APR）',Math.round((a*1.01/(a*.6)-1)*365/7*100).toLocaleString()+'%']]},
+ mj:{url:'http://hongda-xiaodai.com/apply',n:'宏达小额周转',sub:'线上申请 · 线下面签 · 当天放款',hd:['#7A1F1F','#C9A24B'],bg:'#FBF4EC',k1:'月息低至',big:'2 分起',p:'无抵押看流水 · 当天放款 · 急用钱找宏达',amts:[2000,5000,10000,20000],net:.8,termTxt:'30 天一期（可续期）',rl:'月息',rv:'2 分起*',btn:'提交申请 · 当天放款',
+  fees:a=>[['首期利息（放款时预扣）','−'+fmt(a*.2)],['实际到账',fmt(a*.8)],['30 天后应还',fmt(a)],['计息方式','每 30 天计息 20%，利息未付转本金（利滚利）'],['续期','支付当期利息 20% 可续期 30 天，本金不减'],['逾期催收服务费','逾期 3 天起 $200'],['综合年化成本（APR）','约 '+Math.round((1/.8-1)*365/30*100).toLocaleString()+'% 起']]}};
+let SL={sd:2000,mj:5000,open:{}};
+function pageShark(k){const C=SHK[k],act=S.pl.filter(l=>l.status!=='closed'&&l.kind===k),a=SL[k];
+ return `<div class="ext"><div class="ebar"><span class="lk">🔒</span><span class="url">${C.url}</span></div><div class="yl" style="background:${C.bg}"><div class="yl-h" style="background:${C.hd[0]}"><b>${C.n}</b><small>${C.sub}</small></div><div class="yl-hero" style="background:linear-gradient(135deg,${C.hd[0]},${C.hd[1]})"><small>${C.k1}</small><div class="big">${C.big}</div><p>${C.p}</p></div>${act.map(plCard).join('')}<div class="yl-box"><small>选择借款金额</small><div class="opts" style="margin:10px 0">${C.amts.map(v=>`<button class="${a===v?'on':''}" data-act="slAmt" data-k="${k}" data-v="${v}">${fmt(v)}</button>`).join('')}</div><div class="yl-line"><span>借款金额</span><b>${fmt(a)}</b></div><div class="yl-line"><span>借款期限</span><b>${C.termTxt}</b></div><div class="yl-line"><span>${C.rl}</span><b style="color:#0a9">${C.rv}</b></div><button class="yl-more" data-act="slMore" data-k="${k}">${SL.open[k]?'收起':'查看借款详情 ›'}</button>${SL.open[k]?`<div class="yl-fine">${C.fees(a).map(([x,y])=>`<div><span>${x}</span><b>${y}</b></div>`).join('')}</div>`:''}<label class="yl-ck"><input type="checkbox" checked> 我已阅读并同意<a>《借款协议》</a><a>《钱包代扣授权书》</a><a>《通讯录授权》</a></label><button class="yl-btn" style="background:linear-gradient(90deg,${C.hd[0]},${C.hd[1]})" data-act="slGo" data-k="${k}">${C.btn}</button></div></div></div>`}
+function slBorrow(k){const C=SHK[k],a=SL[k],net=Math.round(a*C.net),T=PLK[k].term;
+ needPin(()=>{S.balance=r2(S.balance+net);S.pl.push({id:'pl'+Date.now(),kind:k,face:a,net,due:S.bankDay+T,paid:0,status:'active',rolls:0,debited:false,start:S.bankDay,lastMsg:S.bankDay,flag:false});
+  if(S.pl.filter(l=>l.status!=='closed').length>1)lesson('spiral');
+  S.tx.push({t:new Date(),title:C.n+' · 借款到账',amt:net});updateChrome();saveState();route(true);toast('借款已到账 '+fmt(net)+'（已扣除费用）');
+  setTimeout(()=>pushMsg({from:C.n,text:`【${C.n}】您的借款 ${fmt(a)} 已放款，实际到账 ${fmt(net)}，请于 ${T} 天内还款。`,real:true}),1500)},{title:'确认借款',sub:'借款 '+fmt(a)+'，'+T+' 天'})}
+function adTick(){const now=Date.now();if(now<S.nextAdAt)return;if($('#modal-root').innerHTML||curRoute==='ext'||PAY)return;
+ const ks=['loan','sd','mj'].filter(k=>!S.pl.some(l=>l.status!=='closed'&&(l.kind||'yr')===(k==='loan'?'yr':k)));
+ if(!ks.length||S.pl.filter(l=>l.status!=='closed').length>=2){S.nextAdAt=now+180000;return}
+ const k=pick(ks);AD.k=k;S.nextAdAt=now+200000;
+ const T={loan:['限时福利 · 仅限今日','您有一笔 $5,000 免息借款额度待领取','新客专享 · 日息低至 0.05% · 最快 3 秒到账'],sd:['急用钱？','3 分钟极速到账 · 最高 $3,000','闪电周转 · 无需征信 · 用完即还'],mj:['大额周转','宏达小额周转 · 月息 2 分起','看流水就能借 · 当天放款 · 最高 $20,000']}[k];
+ openModal(`<div class="adm"><i>${T[0]}</i><h3>${T[1]}</h3><p>${T[2]}</p><div class="row"><button class="btn ghost" data-act="closeModal">以后再说</button><button class="btn gold" data-act="adGo">立即领取</button></div></div>`)}
+function loanSmsTick(){const now=Date.now();if(now<S.nextLoanSms)return;S.nextLoanSms=now+240000;
+ const ks=['loan','sd','mj'].filter(k=>!S.pl.some(l=>l.status!=='closed'&&(l.kind||'yr')===(k==='loan'?'yr':k)));if(!ks.length)return;const k=pick(ks);
+ const T={loan:['易融金服','【易融金服】尊敬的用户，您的 $50,000 专属借款额度已激活，免息福利限时领取，最快 3 秒到账！','点击领取额度'],sd:['闪电周转','【闪电周转】您已被预审通过，$3,000 额度今日有效，3 分钟到账，无需征信！','点击提现'],mj:['宏达小额周转','【宏达借贷】王经理提醒：您有一笔 $20,000 周转额度待激活，月息 2 分起，当天放款。','查看额度']}[k];
+ pushMsg({from:T[0],text:T[1],link:T[2],ext:k,real:false})}
+
+/* ---- 新诈骗：冒充公检法 / 征信修复 / 假贷款 / 刷单返利 ---- */
+const FL=()=>clamp(Math.round((S.balance+bankTotal())*.8/5000)*5000,10000,100000);
+const RB=[[30,.25,1],[120,.2,1],[500,.15,0],[2000,.12,0],[6000,.1,0]];
+const FS={
+ police:{url:'http://gaj-xiecha.cc/case/2026-0417',c:['#9B1C1C','#D9534F'],t:'公安部 · 案件协查平台',sub:'案件编号 2026-0417 · 涉案资金核查',btn:'立即转入监管账户',
+  intro:()=>'您的账户涉嫌一起跨境洗钱案。为证明资金来源合法，请将名下资金转入“国家资金监管账户”配合核查，核查完毕后将原路退还。请勿向任何人透露案情，否则以妨碍公务论处。',
+  rev:'真正的公安机关不会通过电话、短信或网页办案，更不存在“安全账户”，也不会要求你转账“核查资金”。',
+  st:[['国家资金核查保证金',()=>clamp(Math.round(S.balance*.45/100)*100,1500,40000),()=>'资金进入监管账户后，24 小时内核查完毕即原路退回。'],['资金来源证明补充金',()=>clamp(Math.round(S.balance*.4/100)*100,1000,30000),()=>'核查发现部分资金流水异常，需追加补充金完成二次核验，通过后一并退还。'],['案件保密履约金',()=>clamp(Math.round(S.balance*.5/100)*100,1000,30000),()=>'为防止案情泄露，需缴纳保密履约金，结案后全额退还。']]},
+ credit:{url:'http://zhengxin-fix.cc/repair',c:['#1F6FEB','#4C94FF'],t:'征信修复中心',sub:'专业消除逾期 · 不成功全额退款',btn:'立即缴纳',
+  intro:()=>'我们有内部渠道，可协助消除网贷逾期、呆账等不良征信记录，3 个工作日见效。先付定金，办理成功再付尾款。',
+  rev:'征信记录只有产生它的金融机构才能更正，不良记录一般保存 5 年，任何机构都不可能“内部消除”。',
+  st:[['办理定金',()=>300,()=>'已为您提交修复申请，需先缴纳办理定金。'],['征信资料审核费',()=>900,()=>'资料已进入审核，需缴纳审核费以加急处理。'],['内部渠道协调费',()=>2200,()=>'需向内部渠道缴纳协调费，缴纳后立即出结果。']]},
+ fakeloan:{url:'http://rongxin-dk.vip/loan',c:['#0E8F5B','#35C48B'],t:'融信贷款 · 放款中心',sub:'审批已通过 · 等待放款',btn:'立即缴纳并放款',
+  intro:()=>`您申请的 ${fmt(FL())} 贷款已审批通过，缴纳保证金后即可当场放款到您的银行卡。`,
+  rev:'正规贷款机构在放款前不会以保证金、解冻金、流水证明金等任何名义收费，凡是“先交钱再放款”的都是骗局。',
+  st:[['放款保证金（5%）',()=>Math.round(FL()*.05),()=>'保证金将在放款后随首期还款一并退还。'],['银行卡号错误 · 账户冻结解冻金',()=>Math.round(FL()*.08),()=>'系统提示收款账户信息异常，账户已被冻结，需缴纳解冻金。'],['还款能力验证 · 流水证明金',()=>Math.round(FL()*.12),()=>'风控要求验证您的还款能力，需缴纳流水证明金，验证后立即放款。']]}};
+function pageFee(m){const k=m.scam,C=FS[k],f=(S.fee[k]=S.fee[k]||{n:0,paid:0,wait:false}),i=Math.min(f.n,C.st.length-1),st=C.st[i],amt=st[1]();
+ return phishFrame(C.url,`<div class="ph"><div class="ph-h" style="background:linear-gradient(135deg,${C.c[0]},${C.c[1]})"><b>${C.t}</b><small>${C.sub}</small></div><p>${C.intro()}</p>${f.n?`<div class="kv" style="margin-bottom:12px"><div><span>已缴纳</span><b>${fmt(f.paid)}</b></div><div><span>办理进度</span><b>${f.wait?'系统审核中…':'审核受阻 · 待处理'}</b></div></div>`:''}${f.wait?'<div class="inv-warn"><span>系统审核中，请稍候……</span></div>':`<div class="inv-warn" style="background:#FFF8E6;border-color:#FFE2A8;color:#8A5A00"><span><b>${st[0]}</b>：${st[2]()}</span></div><div class="kv" style="margin:12px 0"><div><span>待缴项目</span><b>${st[0]}</b></div><div><span>应缴金额</span><b>${fmt(amt)}</b></div><div><span>缴费账户</span><b>钱包余额 ${fmt(S.balance)}</b></div></div><div class="err" id="pfe"></div><button class="btn pri" style="width:100%" data-act="feePay" data-id="${m.id}">${C.btn}</button>`}</div>`)}
+function feePay(id){const m=S.msgs.find(x=>x.id===id);if(!m)return;const k=m.scam,C=FS[k],f=S.fee[k]=S.fee[k]||{n:0,paid:0,wait:false};if(f.wait)return;
+ const i=Math.min(f.n,C.st.length-1),st=C.st[i],amt=st[1]();
+ if(amt>S.balance){const e=$('#pfe');if(e)e.textContent='钱包余额不足，请先从银行账户转入。';return}
+ needPin(()=>{S.balance=r2(S.balance-amt);f.paid=r2(f.paid+amt);f.n++;S.tx.push({t:new Date(),title:C.t+' · '+st[0],amt:-amt});S.safe.lostAmt=r2(S.safe.lostAmt+amt);if(!f.c){f.c=1;S.safe.lost++}lesson(k);updateChrome();
+  if(f.n>=C.st.length){const tot=f.paid;m.done=true;m.link=null;S.fee[k]={n:0,paid:0,wait:false};saveState();location.hash='#/account';
+   setTimeout(()=>openModal(`<div class="okmark bad">!</div><h3 style="text-align:center">您被骗了，累计损失 ${fmt(tot)}</h3><p class="sub" style="text-align:center">${C.rev}</p><div class="row"><button class="btn ghost" data-act="reportLoss" data-a="${tot}">报案</button><button class="btn pri" data-act="goSafe">查看反诈提示</button></div>`),300);return}
+  f.wait=true;route(true);toast('缴纳成功，系统审核中…');setTimeout(()=>{f.wait=false;if(curRoute==='ext')route(true)},1800)},{title:'确认缴纳',sub:st[0]+' '+fmt(amt)})}
+function pageRebate(m){const r=S.rebate||(S.rebate={n:0,pend:0,earn:0,lost:0,wait:false}),t=RB[Math.min(r.n,RB.length-1)],done=r.n>=RB.length;
+ return phishFrame('http://shuadan-pro.top/in',`<div class="ph"><div class="ph-h" style="background:linear-gradient(135deg,#FF5E8A,#FF9A5A)"><b>趣赚 · 任务中心</b><small>在家兼职 · 日结 · 每单佣金 10%–25%</small></div><div class="inv"><small>已到账佣金</small><div class="ab">${fmt(r.earn)}</div>${r.pend?`<small class="muted">待返还本金与佣金 ${fmt(r.pend)}</small>`:''}</div>${done?'<div class="inv-warn"><span>您的账户因操作异常已被系统冻结，需联系客服缴纳解冻金后才能提现。</span></div>':r.wait?'<div class="inv-warn"><span>订单处理中，请稍候……</span></div>':`<div class="kv" style="margin:6px 0 12px"><div><span>任务</span><b>${r.n<2?'新手体验单':'连单任务 第 '+(r.n-1)+' 单'}</b></div><div><span>需垫付</span><b>${fmt(t[0])}</b></div><div><span>佣金</span><b>${fmt(t[0]*t[1])}（${Math.round(t[1]*100)}%）</b></div><div><span>返还</span><b>${t[2]?'完成后立即返还本金 + 佣金':'完成全部连单任务后统一返还'}</b></div></div>`}<div class="err" id="pfe"></div>${done||r.wait?'':`<button class="btn pri" style="width:100%;margin-bottom:8px" data-act="rbTask" data-id="${m.id}">接单 · 垫付 ${fmt(t[0])}</button>`}<button class="btn ghost" style="width:100%" data-act="rbWd" data-id="${m.id}">提现</button></div>`)}
+function rbTask(id){const m=S.msgs.find(x=>x.id===id),r=S.rebate;if(!m||!r||r.wait||r.n>=RB.length)return;const t=RB[r.n],amt=t[0],com=r2(amt*t[1]);
+ if(amt>S.balance){const e=$('#pfe');if(e)e.textContent='钱包余额不足，无法垫付该任务。';return}
+ needPin(()=>{S.balance=r2(S.balance-amt);r.n++;
+  if(t[2]){S.balance=r2(S.balance+amt+com);r.earn=r2(r.earn+com);S.tx.push({t:new Date(),title:'趣赚 · 任务完成（本金+佣金）',amt:com})}
+  else{r.pend=r2(r.pend+amt+com);r.lost=r2((r.lost||0)+amt);S.safe.lostAmt=r2(S.safe.lostAmt+amt);if(!r.c){r.c=1;S.safe.lost++}S.tx.push({t:new Date(),title:'趣赚 · 连单垫付',amt:-amt});lesson('rebate')}
+  updateChrome();
+  if(r.n>=RB.length){const tot=r.lost;m.done=true;m.link=null;saveState();location.hash='#/account';
+   setTimeout(()=>openModal(`<div class="okmark bad">!</div><h3 style="text-align:center">您被骗了，累计垫付 ${fmt(tot)}</h3><p class="sub" style="text-align:center">“刷单返利”前几单会让你小赚，随后用“连单”不断加码，本金永远取不出来。正规平台不会让你垫资，刷单本身也涉嫌违法。</p><div class="row"><button class="btn ghost" data-act="reportLoss" data-a="${tot}">报案</button><button class="btn pri" data-act="goSafe">查看反诈提示</button></div>`),300);return}
+  r.wait=true;route(true);toast(t[2]?'任务完成，佣金 '+fmt(com)+' 已到账':'订单已提交，请完成后续连单');setTimeout(()=>{r.wait=false;if(curRoute==='ext')route(true)},1500)},{title:'确认垫付',sub:fmt(amt)})}
+function rbWd(id){const r=S.rebate,e=$('#pfe');if(!r)return;
+ if(r.pend>0&&r.n<RB.length){if(e)e.textContent='提现失败：您有连单任务未完成，需完成后续任务后才能统一提现。';return}
+ toast('佣金已实时到账钱包，无需提现')}
+Object.assign(SCAMS,{
+ police:{from:'公安刑侦支队',tpl:()=>'【公安局刑侦支队】经查，您名下账户涉嫌一起跨境洗钱案（案件编号 2026-0417），请立即查看《协查通知书》并配合调查，逾期将冻结名下资产。',link:'查看协查通知书',cond:()=>S.balance>=3000},
+ credit:{from:'征信管理中心',tpl:()=>'【征信中心】系统检测到您名下存在网贷逾期等不良记录，将影响房贷车贷。我司可协助办理征信修复，成功后付费。',link:'立即办理征信修复',cond:()=>S.pl.length>0||S.credit<650},
+ fakeloan:{from:'融信贷款',tpl:()=>`【融信贷款】您申请的 ${fmt(FL())} 贷款已审批通过，放款前需缴纳 5% 保证金，否则额度作废，请尽快操作。`,link:'点击确认放款',cond:()=>S.balance+bankTotal()>=8000},
+ rebate:{from:'兼职招聘',tpl:()=>'【兼职】在家刷单，日结 $300–$800，免费培训，每单佣金最高 25%。名额有限，点击加入。',link:'立即加入',cond:()=>S.balance>=1000&&(!S.rebate||S.rebate.n<RB.length)}});
+Object.assign(LESSONS,{
+ sd:{t:'短期高息小额贷（“714 高炮”）',s:'“3 分钟放款、黑户也能借”的短期小额借款，到账只有六成，7 天到期要还全款，逾期每天罚 5%，还会骚扰你的亲友。',f:['宣传“日息低至 0.14%”，把真实费用藏在“详情”里','借 $2,000 实际到账只有 $1,200（砍头息）','周期只有 7 天，逾期违约金按日叠加','默认勾选《通讯录授权》，逾期后向亲友群发欠款通知'],a:['借款前先看综合年化成本（APR），算不清就不要借','民法典规定：利息不得预先在本金中扣除，预扣的按实际到账金额计算本金','只通过银行或持牌机构借款，不要授权通讯录']},
+ mj:{t:'民间高利贷',s:'“月息 2 分起、看流水就能借”的民间借贷，放款时先扣首期利息，到期还不上就“续期”，利息还会滚进本金。',f:['“月息 2 分起”后面藏着星号，实际每 30 天计息 20%','放款时预扣首期利息，到账不足合同金额','利息未付转本金（利滚利），欠得越久越多','逾期 3 天起收取“催收服务费”，并以上门相威胁'],a:['民间借贷利率超过合同成立时一年期 LPR 的 4 倍的部分，法院不予支持','不要以“续期”拖延，续期只交利息、本金一分不减','遇到暴力催收或威胁，保存证据并报警']},
+ rebate:{t:'刷单返利',s:'“在家刷单、日结高佣”，前两单垫付后立刻返本金还加佣金，接着就要你做“连单任务”，越垫越多，最后提不出来。',f:['要求先垫付资金再返利','前几单小额秒返，建立信任','以“连单任务未完成”为由不让提现','最后账户被“冻结”，需要再交钱解冻'],a:['凡是要先垫资的“兼职”都是诈骗','刷单本身属于虚假交易，涉嫌违法','一旦发现无法提现，立即停止转账并报警']},
+ police:{t:'冒充公检法',s:'自称公安、检察院的人说你涉嫌洗钱，要你把钱转入“安全账户”“监管账户”配合核查。',f:['用恐吓话术制造紧张，要求“保密”','要求转账到所谓“安全账户”','让你添加“办案人员”或点击陌生网页','一次核查之后还会不断追加“保证金”'],a:['公检法不会通过电话、网络办案，更没有“安全账户”','接到此类信息，先挂断，再拨 110 或 96110 核实','任何要求转账的“办案”，都是诈骗']},
+ credit:{t:'征信修复骗局',s:'“有内部渠道，可消除不良征信”，先付定金，再收审核费、协调费，钱花了征信一点没变。',f:['声称能“洗白”“消除”征信记录','先收定金，之后不断追加费用','自称有“内部关系”'],a:['征信记录只有产生它的金融机构能更正，不良记录一般保存 5 年','想修复征信，只能按时还款、保持良好记录','征信问题请联系人民银行征信中心或原贷款机构']},
+ fakeloan:{t:'贷款先交费骗局',s:'短信说你的贷款已审批通过，放款前要交保证金，交完又说账户冻结、需要解冻金，再交又要流水证明金。',f:['你并没有申请，却“审批通过”','放款前要求缴纳保证金、手续费','以“卡号错误、账户冻结”为由继续收费','费用名目不断变化'],a:['正规贷款机构放款前不会收取任何费用','只在银行官方 App 或持牌机构办理贷款','已经交过一次费用，就更不要继续交']},
+ spiral:{t:'以贷养贷',s:'为了还一笔网贷，再去借另一笔，几家平台来回倒，利息和手续费越滚越多，最后彻底还不上。',f:['同时有 2 笔以上高息借款','借新钱只为还旧钱','每次展期都在多交服务费'],a:['超出还款能力的借款不要借','第一次还不上，就应该停止借新债，主动联系机构协商分期','必要时寻求家人帮助或法律援助']}});
+
+/* ---- 事件 ---- */
+Object.assign(A,{
+ smsOpen(){const s=$('#sms');s.classList.remove('show');if(PAY||$('#modal-root').innerHTML)renderPeek();else{S.msgs.forEach(m=>m.read=true);location.hash='#/inbox'}},
+ peekSms(){renderPeek()},peekClose(){closePeek()},peekBg(t,e){if(e.target===t)closePeek()},
+ peekInbox(){closePeek();if(PAY||$('#modal-root').innerHTML)closeModal();location.hash='#/inbox'},
+ xfer(t){xferModal(t.dataset.id)},xferGo(t){xferGo(t.dataset.id)},
+ cardFreeze(t){const c=cardById(t.dataset.id);if(!c)return;c.frozen=!c.frozen;saveState();route(true);toast(c.frozen?'卡片已冻结，线上支付将被拒绝':'卡片已解冻')},
+ stmExport(t){const a=S.banks[t.dataset.id];if(!a)return;const rows=[['日期','摘要','金额','余额']].concat(a.log.map(x=>[tstr(new Date(x.t)),x.title,x.amt,x.bal==null?'':x.bal]));
+  const csv='\ufeff'+rows.map(r=>r.map(c=>'"'+String(c).replace(/"/g,'""')+'"').join(',')).join('\n');const l=document.createElement('a');l.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));l.download=BK[a.id].s+'-对账单.csv';l.click();toast('对账单已导出')},
+ slAmt(t){SL[t.dataset.k]=+t.dataset.v;route(true)},slMore(t){SL.open[t.dataset.k]=!SL.open[t.dataset.k];route(true)},slGo(t){slBorrow(t.dataset.k)},
+ feePay(t){feePay(t.dataset.id)},rbTask(t){rbTask(t.dataset.id)},rbWd(t){rbWd(t.dataset.id)}
+});
+
+function setTabH(){const q=$('#q');if(q)q.placeholder=innerWidth<=760?'搜索商品或公司':'搜索：劳力士、法拉利、微软、特斯拉……';const t=$('#tab');document.documentElement.style.setProperty('--tabh',t&&getComputedStyle(t).display!=='none'?t.offsetHeight+'px':'0px')}
+addEventListener('resize',setTabH);
+
+loadState();fixNaN();applyMacroPrices();setTabH();
+setInterval(saveState,2000);
+window.addEventListener('beforeunload',saveState);
+document.addEventListener('visibilitychange',()=>{if(document.hidden)saveState()});
+
+route();
+</script>
+</body>
+</html>
