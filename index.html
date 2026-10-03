@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>ATLAS 环球购 · 模拟商城</title>
+<title>ATLAS 环球购</title>
 <style>
 :root{--ink:#14181F;--ink2:#3A4350;--teal:#0E7C7B;--teal-d:#0A5E5D;--gold:#B58A3C;--gold-l:#EBDDB9;--soft:#F6F7F9;--line:#E8EAEE;--muted:#8A93A0;--red:#D8344F;--green:#1E9E6A;--r:16px;--serif:"Songti SC","Noto Serif SC","Source Han Serif SC",Georgia,serif}
 *{box-sizing:border-box;margin:0;padding:0}
@@ -1852,4 +1852,4 @@ function scamRoll(items){for(const i of items){const p=PM[i.pid];if(!p.scam)cont
 const PARCEL_SVG='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 8 12 3.5 20.5 8v8L12 20.5 3.5 16z"/><path d="M3.5 8 12 12.5 20.5 8M12 12.5v8M7.6 5.8l8.6 4.4"/></svg>';
 function loanRepayable(lid){const l=S.loans.find(x=>x.id===lid);if(!l||l.kind==='cc'||l.status!=='active'||!Number.isFinite(l.remain)){toast('没有可提前还款的银行贷款');return null}return l}
 function loanRepayModal(lid){const l=loanRepayable(lid);if(!l)return;const a=S.banks[l.bank];if(!a){toast('未找到还款账户');return}const need=r2(l.remain+(l.late||0));
- openModal(`<h3>提前还款</h3><p class="sub">一次性还清剩余本金，不收违约金。从 ${BK[l.bank].s}账户扣�
+ openModal(`<h3>提前还款</h3><p class="sub">一次性还清剩余本金，不收违约金。从 ${BK[l.bank].s}账户扣�
